@@ -38,7 +38,8 @@ namespace rapidjson {
 enum ParseFlag {
 	kParseDefaultFlags = 0,			//!< Default parse flags. Non-destructive parsing. Text strings are decoded into allocated buffer.
 	kParseInsituFlag = 1,			//!< In-situ(destructive) parsing.
-	kParseStreamFlag = 1 << 1		//!< Allow stream to contain something after root object.
+	kParseStreamFlag = 1 << 1,		//!< Allow stream to contain something after root object.
+	kParseCommentsFlag = 1 << 2		//!< Support of /* */ comments.
 };
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -171,7 +172,7 @@ inline const char *SkipWhitespace_SIMD(const char* p) {
 
 #ifdef RAPIDJSON_SIMD
 //! Template function specialization for InsituStringStream
-template<> inline void SkipWhitespace(InsituStringStream& stream) { 
+template<> inline void SkipWhitespace(InsituStringStream& stream) {
 	stream.src_ = const_cast<char*>(SkipWhitespace_SIMD(stream.src_));
 }
 
@@ -185,17 +186,17 @@ template<> inline void SkipWhitespace(StringStream& stream) {
 // GenericReader
 
 //! SAX-style JSON parser. Use Reader for UTF8 encoding and default allocator.
-/*! GenericReader parses JSON text from a stream, and send events synchronously to an 
+/*! GenericReader parses JSON text from a stream, and send events synchronously to an
     object implementing Handler concept.
 
-    It needs to allocate a stack for storing a single decoded string during 
+    It needs to allocate a stack for storing a single decoded string during
     non-destructive parsing.
 
-    For in-situ parsing, the decoded string is directly written to the source 
+    For in-situ parsing, the decoded string is directly written to the source
     text string, no temporary buffer is required.
 
     A GenericReader object can be reused for parsing multiple JSON text.
-    
+
     \tparam Encoding Encoding of both the stream and the parse output.
     \tparam Allocator Allocator type for stack.
 */
@@ -211,7 +212,7 @@ public:
 	GenericReader(Allocator* allocator = 0, size_t stackCapacity = kDefaultStackCapacity) : stack_(allocator, stackCapacity), parseError_(0), errorOffset_(0) {}
 
 	//! Parse JSON text.
-	/*! \tparam parseFlags Combination of ParseFlag. 
+	/*! \tparam parseFlags Combination of ParseFlag.
 		 \tparam Stream Type of input stream.
 		 \tparam Handler Type of handler which must implement Handler concept.
 		 \param stream Input stream to be parsed.
@@ -235,7 +236,7 @@ public:
 			return false;
 		}
 
-		SkipWhitespace(stream);
+		SkipComments<parseFlags>(stream);
 
 		if (stream.Peek() == '\0')
 			RAPIDJSON_PARSE_ERROR("Text only contains white space(s)", stream.Tell());
@@ -243,11 +244,14 @@ public:
 			switch (stream.Peek()) {
 				case '{': ParseObject<parseFlags>(stream, handler); break;
 				case '[': ParseArray<parseFlags>(stream, handler); break;
-				default: RAPIDJSON_PARSE_ERROR("Expect either an object or array at root", stream.Tell());
+				default: {
+					stream.Take();
+					RAPIDJSON_PARSE_ERROR("Expect either an object or array at root", stream.Tell());
+				}
 			}
-			SkipWhitespace(stream);
+			SkipComments<parseFlags>(stream);
 
-			if ((parseFlags & kParseStreamFlag) == 0 && stream.Peek() != '\0')
+			if ((parseFlags & kParseStreamFlag) == 0 && stream.Take() != '\0')
 				RAPIDJSON_PARSE_ERROR("Nothing should follow the root object or array.", stream.Tell());
 		}
 
@@ -259,13 +263,44 @@ public:
 	size_t GetErrorOffset() const { return errorOffset_; }
 
 private:
+	// Skip whitespaces and comments.
+	template<unsigned parseFlags, typename Stream>
+	void SkipComments(Stream& stream) {
+		SkipWhitespace(stream);
+
+		if (parseFlags & kParseCommentsFlag) {
+			while (stream.Peek() == '/') {
+				stream.Take();
+
+				if (stream.Peek() == '*') {
+					stream.Take();
+
+					while (stream.Take() != '*' || stream.Take() != '/') {
+						// Do nothing because of that awful logical expression with side effects.
+					}
+				} else if (stream.Peek() == '/') {
+					stream.Take();
+
+					while (stream.Take() != '\n') {
+						// Empty.
+					}
+				} else {
+					RAPIDJSON_PARSE_ERROR("Comments must start with /* or //", stream.Tell());
+					break;
+				}
+
+				SkipWhitespace(stream);
+			}
+		}
+	}
+
 	// Parse object: { string : value, ... }
 	template<unsigned parseFlags, typename Stream, typename Handler>
 	void ParseObject(Stream& stream, Handler& handler) {
 		RAPIDJSON_ASSERT(stream.Peek() == '{');
 		stream.Take();	// Skip '{'
 		handler.StartObject();
-		SkipWhitespace(stream);
+		SkipComments<parseFlags>(stream);
 
 		if (stream.Peek() == '}') {
 			stream.Take();
@@ -275,26 +310,27 @@ private:
 
 		for (SizeType memberCount = 0;;) {
 			if (stream.Peek() != '"') {
+				stream.Take();
 				RAPIDJSON_PARSE_ERROR("Name of an object member must be a string", stream.Tell());
 				break;
 			}
 
 			ParseString<parseFlags>(stream, handler);
-			SkipWhitespace(stream);
+			SkipComments<parseFlags>(stream);
 
 			if (stream.Take() != ':') {
 				RAPIDJSON_PARSE_ERROR("There must be a colon after the name of object member", stream.Tell());
 				break;
 			}
-			SkipWhitespace(stream);
+			SkipComments<parseFlags>(stream);
 
 			ParseValue<parseFlags>(stream, handler);
-			SkipWhitespace(stream);
+			SkipComments<parseFlags>(stream);
 
 			++memberCount;
 
 			switch(stream.Take()) {
-				case ',': SkipWhitespace(stream); break;
+				case ',': SkipComments<parseFlags>(stream); break;
 				case '}': handler.EndObject(memberCount); return;
 				default:  RAPIDJSON_PARSE_ERROR("Must be a comma or '}' after an object member", stream.Tell());
 			}
@@ -307,7 +343,7 @@ private:
 		RAPIDJSON_ASSERT(stream.Peek() == '[');
 		stream.Take();	// Skip '['
 		handler.StartArray();
-		SkipWhitespace(stream);
+		SkipComments<parseFlags>(stream);
 
 		if (stream.Peek() == ']') {
 			stream.Take();
@@ -318,10 +354,10 @@ private:
 		for (SizeType elementCount = 0;;) {
 			ParseValue<parseFlags>(stream, handler);
 			++elementCount;
-			SkipWhitespace(stream);
+			SkipComments<parseFlags>(stream);
 
 			switch (stream.Take()) {
-				case ',': SkipWhitespace(stream); break;
+				case ',': SkipComments<parseFlags>(stream); break;
 				case ']': handler.EndArray(elementCount); return;
 				default:  RAPIDJSON_PARSE_ERROR("Must be a comma or ']' after an array element.", stream.Tell());
 			}
@@ -376,7 +412,7 @@ private:
 				codepoint -= 'A' - 10;
 			else if (c >= 'a' && c <= 'f')
 				codepoint -= 'a' - 10;
-			else 
+			else
 				RAPIDJSON_PARSE_ERROR("Incorrect hex digit after \\u escape", s.Tell() - 1);
 		}
 		stream = s; // Restore stream
@@ -388,10 +424,10 @@ private:
 	void ParseString(Stream& stream, Handler& handler) {
 #define Z16 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 		static const Ch escape[256] = {
-			Z16, Z16, 0, 0,'\"', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,'/', 
-			Z16, Z16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,'\\', 0, 0, 0, 
-			0, 0,'\b', 0, 0, 0,'\f', 0, 0, 0, 0, 0, 0, 0,'\n', 0, 
-			0, 0,'\r', 0,'\t', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+			Z16, Z16, 0, 0,'\"', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,'/',
+			Z16, Z16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,'\\', 0, 0, 0,
+			0, 0,'\b', 0, 0, 0,'\f', 0, 0, 0, 0, 0, 0, 0,'\n', 0,
+			0, 0,'\r', 0,'\t', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 			Z16, Z16, Z16, Z16, Z16, Z16, Z16, Z16
 		};
 #undef Z16
@@ -440,7 +476,7 @@ private:
 					Ch buffer[4];
 					SizeType count = SizeType(Encoding::Encode(buffer, codepoint) - &buffer[0]);
 
-					if (parseFlags & kParseInsituFlag) 
+					if (parseFlags & kParseInsituFlag)
 						for (SizeType i = 0; i < count; i++)
 							s.Put(buffer[i]);
 					else {
@@ -523,6 +559,7 @@ private:
 				}
 		}
 		else {
+			stream.Take();
 			RAPIDJSON_PARSE_ERROR("Expect a value here.", stream.Tell());
 			return;
 		}
@@ -532,8 +569,8 @@ private:
 		bool useDouble = false;
 		if (try64bit) {
 			i64 = i;
-			if (minus) 
-				while (s.Peek() >= '0' && s.Peek() <= '9') {					
+			if (minus)
+				while (s.Peek() >= '0' && s.Peek() <= '9') {
 					if (i64 >= 922337203685477580uLL) // 2^63 = 9223372036854775808
 						if (i64 != 922337203685477580uLL || s.Peek() > '8') {
 							useDouble = true;
@@ -542,7 +579,7 @@ private:
 					i64 = i64 * 10 + (s.Take() - '0');
 				}
 			else
-				while (s.Peek() >= '0' && s.Peek() <= '9') {					
+				while (s.Peek() >= '0' && s.Peek() <= '9') {
 					if (i64 >= 1844674407370955161uLL) // 2^64 - 1 = 18446744073709551615
 						if (i64 != 1844674407370955161uLL || s.Peek() > '5') {
 							useDouble = true;
@@ -579,6 +616,7 @@ private:
 				--expFrac;
 			}
 			else {
+				stream.Take();
 				RAPIDJSON_PARSE_ERROR("At least one digit in fraction part", stream.Tell());
 				return;
 			}
@@ -620,6 +658,7 @@ private:
 				}
 			}
 			else {
+				stream.Take();
 				RAPIDJSON_PARSE_ERROR("At least one digit in exponent", s.Tell());
 				return;
 			}
@@ -665,7 +704,7 @@ private:
 		}
 	}
 
-	static const size_t kDefaultStackCapacity = 256;	//!< Default stack capacity in bytes for storing a single decoded string. 
+	static const size_t kDefaultStackCapacity = 256;	//!< Default stack capacity in bytes for storing a single decoded string.
 	internal::Stack<Allocator> stack_;	//!< A stack for storing decoded string temporarily during non-destructive parsing.
 	jmp_buf jmpbuf_;					//!< setjmp buffer for fast exit from nested parsing function calls.
 	const char* parseError_;

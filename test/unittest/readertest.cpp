@@ -158,7 +158,7 @@ TEST(Reader, ParseNumberHandler_Error) {
 
 	TEST_NUMBER_ERROR("a");		// At least one digit in integer part
 	TEST_NUMBER_ERROR(".1");	// At least one digit in integer part
-	
+
 	{
 		char n1e309[311];	// '1' followed by 309 '0'
 		n1e309[0] = '1';
@@ -180,7 +180,7 @@ struct ParseStringHandler : BaseReaderHandler<Encoding> {
 	ParseStringHandler() : str_(0), length_(0) {}
 	~ParseStringHandler() { EXPECT_TRUE(str_ != 0); if (copy_) free(const_cast<typename Encoding::Ch*>(str_)); }
 	void Default() { FAIL(); }
-	void String(const typename Encoding::Ch* str, size_t length, bool copy) { 
+	void String(const typename Encoding::Ch* str, size_t length, bool copy) {
 		EXPECT_EQ(0, str_);
 		if (copy) {
 			str_ = (typename Encoding::Ch*)malloc((length + 1) * sizeof(typename Encoding::Ch));
@@ -188,8 +188,8 @@ struct ParseStringHandler : BaseReaderHandler<Encoding> {
 		}
 		else
 			str_ = str;
-		length_ = length; 
-		copy_ = copy; 
+		length_ = length;
+		copy_ = copy;
 	}
 
 	const typename Encoding::Ch* str_;
@@ -216,7 +216,7 @@ TEST(Reader, ParseString) {
 		EXPECT_EQ(StrLen(e), h2.length_); \
 	}
 
-	// String constant L"\xXX" can only specify character code in bytes, which is not endianness-neutral. 
+	// String constant L"\xXX" can only specify character code in bytes, which is not endianness-neutral.
 	// And old compiler does not support u"" and U"" string literal. So here specify string literal by array of Ch.
 #define ARRAY(...) { __VA_ARGS__ }
 #define TEST_STRINGARRAY(Encoding, array, x) \
@@ -313,7 +313,7 @@ struct ParseArrayHandler : BaseReaderHandler<> {
 	ParseArrayHandler() : step_(0) {}
 
 	void Default() { FAIL(); }
-	void Uint(unsigned i) { EXPECT_EQ(step_, i); step_++; } 
+	void Uint(unsigned i) { EXPECT_EQ(step_, i); step_++; }
 	void StartArray() { EXPECT_EQ(0u, step_); step_++; }
 	void EndArray(SizeType) { step_++; }
 
@@ -365,14 +365,14 @@ struct ParseObjectHandler : BaseReaderHandler<> {
 	ParseObjectHandler() : step_(0) {}
 
 	void Null() { EXPECT_EQ(8u, step_); step_++; }
-	void Bool(bool b) { 
+	void Bool(bool b) {
 		switch(step_) {
 			case 4: EXPECT_TRUE(b); step_++; break;
 			case 6: EXPECT_FALSE(b); step_++; break;
 			default: FAIL();
 		}
 	}
-	void Int(int i) { 
+	void Int(int i) {
 		switch(step_) {
 			case 10: EXPECT_EQ(123, i); step_++; break;
 			case 15: EXPECT_EQ(1, i); step_++; break;
@@ -383,7 +383,7 @@ struct ParseObjectHandler : BaseReaderHandler<> {
 	}
 	void Uint(unsigned i) { Int(i); }
 	void Double(double d) { EXPECT_EQ(12u, step_); EXPECT_EQ(3.1416, d); step_++; }
-	void String(const char* str, size_t, bool) { 
+	void String(const char* str, size_t, bool) {
 		switch(step_) {
 			case 1: EXPECT_STREQ("hello", str); step_++; break;
 			case 2: EXPECT_STREQ("world", str); step_++; break;
@@ -446,7 +446,7 @@ TEST(Reader, Parse_EmptyObject) {
 	EXPECT_EQ(2u, h.step_);
 }
 
-#ifdef RAPIDJSON_USE_EXCEPTION 
+#ifdef RAPIDJSON_USE_EXCEPTION
 TEST(Reader, ParseObject_Error) {
 #define TEST_OBJECT_ERROR(str) \
 	{ \
@@ -515,3 +515,69 @@ TEST(Reader, Parse_Error) {
 #undef TEST_ERROR
 }
 #endif // RAPIDJSON_USE_EXCEPTION
+
+TEST(Reader, Comments) {
+	const char* json =
+	"// Here is a one-line comment.\n"
+	"{// And here's another one\n"
+	"	/*And here's an in-line one.*/\"hello\" : \"world\","
+	"	\"t\" :/* And one with '*' symbol*/true ,"
+	"/* A multiline comment\n"
+	"   goes here*/"
+	"	\"f\" : false, \"n\": null, \"i\":123, \"pi\": 3.1416, \"a\":[1, 2, 3]"
+	"}/*The last one to be super-sure */";
+
+	StringStream s(json);
+	ParseObjectHandler h;
+	Reader reader;
+	EXPECT_TRUE(reader.Parse<kParseCommentsFlag>(s, h));
+	EXPECT_EQ(20u, h.step_);
+}
+
+TEST(Reader, InlineCommentsAreDisabledByDefault1) {
+	const char* json = "/* Inline comment. */ {\"hello\" : \"world\", \"t\" : true , \"f\" : false, \"n\": null, \"i\":123, \"pi\": 3.1416, \"a\":[1, 2, 3] }";
+
+	StringStream s(json);
+	ParseObjectHandler h;
+	Reader reader;
+	EXPECT_FALSE(reader.Parse<kParseDefaultFlags>(s, h));
+}
+
+TEST(Reader, InlineCommentsAreDisabledByDefault2) {
+	const char* json = "{\"hello\" : \"world\", \"t\" : /* Inline comment. */ true , \"f\" : false, \"n\": null, \"i\":123, \"pi\": 3.1416, \"a\":[1, 2, 3] }";
+
+	StringStream s(json);
+	ParseObjectHandler h;
+	Reader reader;
+	EXPECT_FALSE(reader.Parse<kParseDefaultFlags>(s, h));
+}
+
+TEST(Reader, MultilineCommentsAreDisabledByDefault) {
+	const char* json =
+	"{\"hello\" : /* Multiline comment starts here\n"
+	" continues here\n"
+	" and ends here */\"world\", \"t\" :true , \"f\" : false, \"n\": null, \"i\":123, \"pi\": 3.1416, \"a\":[1, 2, 3] }";
+
+	StringStream s(json);
+	ParseObjectHandler h;
+	Reader reader;
+	EXPECT_FALSE(reader.Parse<kParseDefaultFlags>(s, h));
+}
+
+TEST(Reader, OnelineCommentsAreDisabledByDefault1) {
+	const char* json = "// One-line comment\n {\"hello\" : \"world\", \"t\" : true , \"f\" : false, \"n\": null, \"i\":123, \"pi\": 3.1416, \"a\":[1, 2, 3] }";
+
+	StringStream s(json);
+	ParseObjectHandler h;
+	Reader reader;
+	EXPECT_FALSE(reader.Parse<kParseDefaultFlags>(s, h));
+}
+
+TEST(Reader, OnelineCommentsAreDisabledByDefault2) {
+	const char* json = "{\"hello\" : \"world\",// One-line comment\n \"t\" : true , \"f\" : false, \"n\": null, \"i\":123, \"pi\": 3.1416, \"a\":[1, 2, 3] }";
+
+	StringStream s(json);
+	ParseObjectHandler h;
+	Reader reader;
+	EXPECT_FALSE(reader.Parse<kParseDefaultFlags>(s, h));
+}
