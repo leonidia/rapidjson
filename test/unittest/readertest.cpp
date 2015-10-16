@@ -516,68 +516,103 @@ TEST(Reader, Parse_Error) {
 }
 #endif // RAPIDJSON_USE_EXCEPTION
 
-TEST(Reader, Comments) {
-	const char* json =
-	"// Here is a one-line comment.\n"
-	"{// And here's another one\n"
-	"	/*And here's an in-line one.*/\"hello\" : \"world\","
-	"	\"t\" :/* And one with '*' symbol*/true ,"
-	"/* A multiline comment\n"
-	"   goes here*/"
-	"	\"f\" : false, \"n\": null, \"i\":123, \"pi\": 3.1416, \"a\":[1, 2, 3]"
-	"}/*The last one to be super-sure */";
+TEST(Reader, ParseComments) {
+    const char* json =
+    "// Here is a one-line comment.\n"
+    "{// And here's another one\n"
+    "   /*And here's an in-line one.*/\"hello\" : \"world\","
+    "   \"t\" :/* And one with '*' symbol*/true ,"
+    "/* A multiline comment\n"
+    "   goes here*/"
+    "   \"f\" : false, \"n\": null, \"i\":123, \"pi\": 3.1416, \"a\":[1, 2, 3]"
+    "}/*And the last one to be sure */";
 
-	StringStream s(json);
-	ParseObjectHandler h;
-	Reader reader;
-	EXPECT_TRUE(reader.Parse<kParseCommentsFlag>(s, h));
-	EXPECT_EQ(20u, h.step_);
+    StringStream s(json);
+    ParseObjectHandler h;
+    Reader reader;
+    EXPECT_TRUE(reader.Parse<kParseCommentsFlag>(s, h));
+    EXPECT_EQ(20u, h.step_);
 }
 
-TEST(Reader, InlineCommentsAreDisabledByDefault1) {
-	const char* json = "/* Inline comment. */ {\"hello\" : \"world\", \"t\" : true , \"f\" : false, \"n\": null, \"i\":123, \"pi\": 3.1416, \"a\":[1, 2, 3] }";
+TEST(Reader, ParseEmptyInlineComment) {
+    const char* json = "{/**/\"hello\" : \"world\", \"t\" : true, \"f\" : false, \"n\": null, \"i\":123, \"pi\": 3.1416, \"a\":[1, 2, 3] }";
 
-	StringStream s(json);
-	ParseObjectHandler h;
-	Reader reader;
-	EXPECT_FALSE(reader.Parse<kParseDefaultFlags>(s, h));
+    StringStream s(json);
+    ParseObjectHandler h;
+    Reader reader;
+    EXPECT_TRUE(reader.Parse<kParseCommentsFlag>(s, h));
+    EXPECT_EQ(20u, h.step_);
 }
 
-TEST(Reader, InlineCommentsAreDisabledByDefault2) {
-	const char* json = "{\"hello\" : \"world\", \"t\" : /* Inline comment. */ true , \"f\" : false, \"n\": null, \"i\":123, \"pi\": 3.1416, \"a\":[1, 2, 3] }";
+TEST(Reader, ParseEmptyOnelineComment) {
+    const char* json = "{//\n\"hello\" : \"world\", \"t\" : true, \"f\" : false, \"n\": null, \"i\":123, \"pi\": 3.1416, \"a\":[1, 2, 3] }";
 
-	StringStream s(json);
-	ParseObjectHandler h;
-	Reader reader;
-	EXPECT_FALSE(reader.Parse<kParseDefaultFlags>(s, h));
+    StringStream s(json);
+    ParseObjectHandler h;
+    Reader reader;
+    EXPECT_TRUE(reader.Parse<kParseCommentsFlag>(s, h));
+    EXPECT_EQ(20u, h.step_);
 }
 
-TEST(Reader, MultilineCommentsAreDisabledByDefault) {
-	const char* json =
-	"{\"hello\" : /* Multiline comment starts here\n"
-	" continues here\n"
-	" and ends here */\"world\", \"t\" :true , \"f\" : false, \"n\": null, \"i\":123, \"pi\": 3.1416, \"a\":[1, 2, 3] }";
+TEST(Reader, ParseMultipleCommentsInARow) {
+    const char* json =
+    "{/* first comment *//* second */\n"
+    "/* third */ /*fourth*/// last one\n"
+    "\"hello\" : \"world\", \"t\" : true, \"f\" : false, \"n\": null, \"i\":123, \"pi\": 3.1416, \"a\":[1, 2, 3] }";
 
-	StringStream s(json);
-	ParseObjectHandler h;
-	Reader reader;
-	EXPECT_FALSE(reader.Parse<kParseDefaultFlags>(s, h));
+    StringStream s(json);
+    ParseObjectHandler h;
+    Reader reader;
+    EXPECT_TRUE(reader.Parse<kParseCommentsFlag>(s, h));
+    EXPECT_EQ(20u, h.step_);
 }
 
-TEST(Reader, OnelineCommentsAreDisabledByDefault1) {
-	const char* json = "// One-line comment\n {\"hello\" : \"world\", \"t\" : true , \"f\" : false, \"n\": null, \"i\":123, \"pi\": 3.1416, \"a\":[1, 2, 3] }";
+TEST(Reader, InlineCommentsAreDisabledByDefault) {
+    {
+        const char* json = "{/* Inline comment. */\"hello\" : \"world\", \"t\" : true, \"f\" : false, \"n\": null, \"i\":123, \"pi\": 3.1416, \"a\":[1, 2, 3] }";
 
-	StringStream s(json);
-	ParseObjectHandler h;
-	Reader reader;
-	EXPECT_FALSE(reader.Parse<kParseDefaultFlags>(s, h));
+        StringStream s(json);
+        ParseObjectHandler h;
+        Reader reader;
+        EXPECT_FALSE(reader.Parse<kParseDefaultFlags>(s, h));
+    }
+
+    {
+        const char* json =
+        "{\"hello\" : /* Multiline comment starts here\n"
+        " continues here\n"
+        " and ends here */\"world\", \"t\" :true , \"f\" : false, \"n\": null, \"i\":123, \"pi\": 3.1416, \"a\":[1, 2, 3] }";
+
+        StringStream s(json);
+        ParseObjectHandler h;
+        Reader reader;
+        EXPECT_FALSE(reader.Parse<kParseDefaultFlags>(s, h));
+    }
 }
 
-TEST(Reader, OnelineCommentsAreDisabledByDefault2) {
-	const char* json = "{\"hello\" : \"world\",// One-line comment\n \"t\" : true , \"f\" : false, \"n\": null, \"i\":123, \"pi\": 3.1416, \"a\":[1, 2, 3] }";
+TEST(Reader, OnelineCommentsAreDisabledByDefault) {
+    const char* json = "{// One-line comment\n\"hello\" : \"world\", \"t\" : true , \"f\" : false, \"n\": null, \"i\":123, \"pi\": 3.1416, \"a\":[1, 2, 3] }";
 
-	StringStream s(json);
-	ParseObjectHandler h;
-	Reader reader;
-	EXPECT_FALSE(reader.Parse<kParseDefaultFlags>(s, h));
+    StringStream s(json);
+    ParseObjectHandler h;
+    Reader reader;
+    EXPECT_FALSE(reader.Parse<kParseDefaultFlags>(s, h));
+}
+
+TEST(Reader, EofAfterOneLineComment) {
+    const char* json = "{\"hello\" : \"world\" // EOF is here -->\0 \n}";
+
+    StringStream s(json);
+    ParseObjectHandler h;
+    Reader reader;
+    EXPECT_FALSE(reader.Parse<kParseCommentsFlag>(s, h));
+}
+
+TEST(Reader, IncompleteMultilineComment) {
+    const char* json = "{\"hello\" : \"world\" /* EOF is here -->\0 */}";
+
+    StringStream s(json);
+    ParseObjectHandler h;
+    Reader reader;
+    EXPECT_FALSE(reader.Parse<kParseCommentsFlag>(s, h));
 }

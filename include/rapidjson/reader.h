@@ -265,33 +265,37 @@ public:
 private:
 	// Skip whitespaces and comments.
 	template<unsigned parseFlags, typename Stream>
-	void SkipComments(Stream& stream) {
-		SkipWhitespace(stream);
+	void SkipComments(Stream& is) {
+		SkipWhitespace(is);
 
-		if (parseFlags & kParseCommentsFlag) {
-			while (stream.Peek() == '/') {
-				stream.Take();
+        if (parseFlags & kParseCommentsFlag) {
+            while (is.Peek() == '/') {
+                is.Take();
 
-				if (stream.Peek() == '*') {
-					stream.Take();
+                if (is.Peek() == '*') {
+                    is.Take();
+                    while (true) {
+                        if (is.Peek() == '\0')
+        					RAPIDJSON_PARSE_ERROR("Incomplete multi-line comment", is.Tell());
 
-					while (stream.Take() != '*' || stream.Take() != '/') {
-						// Do nothing because of that awful logical expression with side effects.
-					}
-				} else if (stream.Peek() == '/') {
-					stream.Take();
+                        if (is.Take() == '*') {
+                            if (is.Peek() == '\0')
+            					RAPIDJSON_PARSE_ERROR("Incomplete multi-line comment", is.Tell());
 
-					while (stream.Take() != '\n') {
-						// Empty.
-					}
-				} else {
-					RAPIDJSON_PARSE_ERROR("Comments must start with /* or //", stream.Tell());
-					break;
-				}
+                            if (is.Take() == '/')
+                                break;
+                        }
+                    }
+                } else if (is.Peek() == '/') {
+                    is.Take();
+                    while (is.Peek() != '\0' && is.Take() != '\n') { }
+                } else {
+					RAPIDJSON_PARSE_ERROR("Comments must start with /* or //", is.Tell());
+                }
 
-				SkipWhitespace(stream);
-			}
-		}
+                SkipWhitespace(is);
+            }
+        }
 	}
 
 	// Parse object: { string : value, ... }
